@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 export const metadata = {
   title: "Sobre • Scripts.AI",
   description:
@@ -8,6 +10,15 @@ export default function AboutPage() {
   return (
     <main className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-white px-6 py-16">
       <div className="mx-auto max-w-3xl space-y-8">
+        <div className="flex justify-center">
+          <Link
+            href="/"
+            className="btn-ghost px-4 py-2 rounded-lg text-slate-300 hover:text-blue-400 transition"
+          >
+            🏠 Início
+          </Link>
+        </div>
+
         <h1 className="text-4xl font-bold text-center text-blue-400">
           Sobre o Scripts.AI
         </h1>
