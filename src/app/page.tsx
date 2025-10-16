@@ -1,103 +1,247 @@
-import Image from "next/image";
+"use client";
 
-export default function Home() {
+import { useMemo, useState } from "react";
+import { toast, Toaster } from "sonner";
+import { motion } from "framer-motion";
+import { CheckCircle2 } from "lucide-react";
+import HeaderBar from "@/components/HeaderBar";
+import FormGenerator from "@/components/FormGenerator";
+import ChatBox from "@/components/ChatBox";
+import ResultCard from "@/components/ResultCard";
+import VariationsGrid from "@/components/VariationsGrid";
+import HistorySection from "@/components/HistorySection";
+import { useHistory } from "@/hooks/useHistory";
+import { copyText, downloadText, uid } from "@/lib/utils";
+import type { FormData, SavedItem, UIMode } from "@/lib/schema";
+import { parseChatToFormData } from "@/lib/schema";
+
+export default function Page() {
+  const { history, persist, clear, setLike, restore } = useHistory();
+
+  const [mode, setMode] = useState<UIMode>("form");
+  const [formValues, setFormValues] = useState<FormData>({ tema: "Peixe-leão é praga no Brasil", duracaoSeg: 30, tom: "educativo", persona: "curiosos de biologia" });
+  const [roteiro, setRoteiro] = useState("");
+  const [variations, setVariations] = useState<string[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [genLoading, setGenLoading] = useState(false);
+  const [thLoading, setThLoading] = useState(false);
+  const [chatMessages, setChatMessages] = useState<{ role: "user" | "assistant"; text: string }[]>([]);
+
+  const charCount = useMemo(() => roteiro.length, [roteiro]);
+
+  function persistAdd(item: SavedItem) {
+    const newHist = [item, ...history].slice(0, 200);
+    persist(newHist);
+  }
+
+  function clearAll() {
+    setRoteiro("");
+    setVariations([]);
+    setChatMessages([]);
+    setFormValues({ tema: "", duracaoSeg: 30, tom: "educativo", persona: "" });
+  }
+
+  async function onSubmit(values: FormData) {
+    setLoading(true);
+    setVariations([]);
+    setRoteiro("");
+    try {
+      const res = await fetch("/api/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(values),
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || "Falha ao gerar");
+      const text: string = data.roteiro;
+      setRoteiro(text);
+      persistAdd({ id: uid(), kind: "normal", createdAt: Date.now(), values, roteiro: text, like: null });
+      if (mode === "chat") setChatMessages((m) => [...m, { role: "assistant", text }]);
+      toast.success("Roteiro gerado", { icon: <CheckCircle2 /> });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Erro desconhecido";
+      toast.error(msg);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function generateVariations() {
+    setGenLoading(true);
+    setVariations([]);
+    setRoteiro("");
+    const values = formValues;
+    try {
+      const calls = [1, 2, 3].map((i) =>
+        fetch("/api/generate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...values, tema: `${values.tema} (variação ${i})` }),
+        }).then((r) => r.json())
+      );
+      const results = await Promise.all(calls);
+      const ok = results.filter((r) => r?.ok && typeof r.roteiro === "string").map((r) => r.roteiro as string);
+      setVariations(ok);
+      const items: SavedItem[] = ok.map((text, idx) => ({
+        id: uid(),
+        kind: "variation",
+        createdAt: Date.now(),
+        values: { ...values, tema: `${values.tema} (variação ${idx + 1})` },
+        roteiro: text,
+        like: null,
+      }));
+      persist([...items, ...history].slice(0, 200));
+      if (ok.length === 0) throw new Error("Falha ao gerar variações");
+      toast.success(`Geradas ${ok.length} variações`);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Erro desconhecido";
+      toast.error(msg);
+    } finally {
+      setGenLoading(false);
+    }
+  }
+
+  async function genTitlesHashtags() {
+    if (!roteiro) {
+      toast.message("Gere um roteiro primeiro.");
+      return;
+    }
+    setThLoading(true);
+    try {
+      const values = formValues;
+      const prompt =
+        `Gere 5 títulos curtos e 15 hashtags em PT-BR para o roteiro abaixo, sem explicações.\n` +
+        `Formato:\n- TÍTULOS:\n1) ...\n2) ...\n3) ...\n4) ...\n5) ...\n\n- HASHTAGS:\n#...\n#...\n(uma por linha)\n\nROTEIRO:\n${roteiro}`;
+      const res = await fetch("/api/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...values, tema: prompt }),
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || "Falha ao gerar títulos/hashtags");
+      const text: string = data.roteiro;
+      await copyText(text);
+      toast.success("Títulos e hashtags gerados (copiados)");
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Erro desconhecido";
+      toast.error(msg);
+    } finally {
+      setThLoading(false);
+    }
+  }
+
+  function likeFromCurrent(v: boolean) {
+    if (!roteiro) return;
+    const item = history.find((h) => h.roteiro === roteiro);
+    if (!item) return;
+    setLike(item.id, v);
+    toast.success(v ? "Marcado como gostei" : "Marcado como não curti");
+  }
+
+  function restoreFromHistory(id: string) {
+    const item = restore(id);
+    if (!item) return;
+    setFormValues(item.values);
+    setRoteiro(item.roteiro);
+    toast.success("Roteiro restaurado");
+  }
+
+  async function submitChat(text: string) {
+    setChatMessages((m) => [...m, { role: "user", text }]);
+    const parsed = parseChatToFormData(text);
+    setFormValues(parsed);
+
+    const wantsVariations = /\bvaria(?:c|ç)oes?\s*3\b|\b3\s*varia(?:c|ç)oes?\b/i.test(text);
+    if (wantsVariations) {
+      await generateVariations();
+      return;
+    }
+    await onSubmit(parsed);
+  }
+
   return (
-    <div className="font-sans grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20">
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="font-mono list-inside list-decimal text-sm/6 text-center sm:text-left">
-          <li className="mb-2 tracking-[-.01em]">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] font-mono font-semibold px-1 py-0.5 rounded">
-              src/app/page.tsx
-            </code>
-            .
-          </li>
-          <li className="tracking-[-.01em]">
-            Save and see your changes instantly.
-          </li>
-        </ol>
+    <main className="min-h-screen">
+      <Toaster richColors />
+      <HeaderBar />
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
+      <div id="top" className="relative">
+        <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }} className="mx-auto max-w-6xl px-6 pt-10 pb-4">
+          <div className="space-y-2">
+            <div className="badge"><span>Gerador de Scripts • IA</span></div>
+            <h1 className="text-3xl sm:text-4xl font-semibold tracking-tight">Reels/TikTok</h1>
+            <p className="text-slate-300/90 max-w-2xl">Roteiros curtos, diretos e com retenção alta.</p>
+          </div>
+        </motion.div>
+
+        <motion.div id="form" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5, delay: 0.05 }} className="mx-auto max-w-6xl px-6 pb-10">
+          {mode === "form" ? (
+            <FormGenerator
+              disabled={loading}
+              loadingVaria={genLoading}
+              loadingTags={thLoading}
+              onSubmit={onSubmit}
+              onClear={clearAll}
+              onVaria={generateVariations}
+              onTags={genTitlesHashtags}
+              setValues={setFormValues}
             />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
-        </div>
-      </main>
-      <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
+          ) : (
+            <ChatBox
+              loading={loading}
+              messages={chatMessages}
+              onSubmit={submitChat}
+              onClear={() => { setChatMessages([]); }}
+              onVaria={generateVariations}
+              onTags={genTitlesHashtags}
+              canVaria={!genLoading}
+              canTags={!thLoading && !!roteiro}
+            />
+          )}
+
+          <div className="mt-6 mb-2 text-center">
+            <p className="text-slate-400 text-sm sm:text-base">
+              💬 Não quer preencher o formulário? <span className="text-blue-400 font-medium">Use o modo chat abaixo!</span>
+            </p>
+          </div>
+
+          <div className="mt-3 flex flex-wrap justify-center gap-3">
+            <button
+              className={`btn-ghost px-5 py-2 rounded-lg transition ${mode === "form" ? "bg-blue-600/20 text-blue-300 ring-2 ring-blue-500/50" : "hover:bg-slate-800/50"}`}
+              onClick={() => setMode("form")}
+            >
+              Formulário
+            </button>
+            <button
+              className={`btn-ghost px-5 py-2 rounded-lg transition ${mode === "chat" ? "bg-blue-600/20 text-blue-300 ring-2 ring-blue-500/50" : "hover:bg-slate-800/50"}`}
+              onClick={() => setMode("chat")}
+            >
+              Chat
+            </button>
+          </div>
+        </motion.div>
+
+        <motion.div id="result" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5, delay: 0.1 }} className="mx-auto max-w-6xl px-6 pb-12">
+          <ResultCard
+            roteiro={roteiro}
+            charCount={charCount}
+            onCopy={() => copyText(roteiro)}
+            onLike={likeFromCurrent}
+            onDownloadTxt={() => downloadText("roteiro.txt", roteiro)}
+            onDownloadMd={() => downloadText("roteiro.md", roteiro)}
           />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
+          <VariationsGrid variations={variations} onCopy={(t) => copyText(t)} />
+        </motion.div>
+
+        <motion.div id="history" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5, delay: 0.15 }} className="mx-auto max-w-6xl px-6 pb-24">
+          <HistorySection
+            items={history}
+            onCopy={(t) => copyText(t)}
+            onRestore={restoreFromHistory}
+            onClearAll={clear}
+            onLike={setLike}
           />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
-    </div>
+        </motion.div>
+      </div>
+    </main>
   );
 }
