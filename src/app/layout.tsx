@@ -43,6 +43,17 @@ export default function RootLayout({
       >
         {children}
 
+        <div
+          id="container-ae078a2b722759b7ecedf1341406a1af"
+          className="my-8 flex justify-center"
+        />
+
+        <Script
+          id="adsterra-native"
+          strategy="afterInteractive"
+          src="//pl27884139.effectivegatecpm.com/ae078a2b722759b7ecedf1341406a1af/invoke.js"
+        />
+
         <footer className="py-8 text-center text-sm text-slate-400">
           <p>
             🎙 Dê voz profissional aos seus roteiros com{" "}

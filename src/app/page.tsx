@@ -231,6 +231,10 @@ export default function Page() {
           />
           <VariationsGrid variations={variations} onCopy={(t) => copyText(t)} />
         </motion.div>
+        <div className="my-10 flex justify-center">
+          <div id="container-ae078a2b722759b7ecedf1341406a1af" className="w-full max-w-3xl"></div>
+        </div>
+
 
         <motion.div id="history" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5, delay: 0.15 }} className="mx-auto max-w-6xl px-6 pb-24">
           <HistorySection
